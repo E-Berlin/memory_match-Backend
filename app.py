@@ -1,85 +1,90 @@
-from flask import Flask, request, jsonify, session
+import sqlite3
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-import json
-import os
 
 app = Flask(__name__)
 CORS(app)
 
-USERS_FILE = "users.json"
-RECORDS_FILE = "records.json"
+DB_FILE = "memory_match.db"
 
-# ====== 辅助函数：读写 JSON ======
-def load_json(filename, default):
-    if os.path.exists(filename):
-        with open(filename, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                # 文件存在但为空或内容错误，返回默认值
-                return default
-    return default
+# 初始化数据库
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    # 用户表
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password TEXT
+        )
+    """)
+    # 排行榜表
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            ms INTEGER
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-def save_json(filename, data):
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+init_db()
 
-# ====== 初始化数据 ======
-users = load_json(USERS_FILE, {})
-records = load_json(RECORDS_FILE, [])
-
-# ====== 注册 ======
 @app.route("/register", methods=["POST"])
 def register():
     data = request.json
     user, password = data.get("username"), data.get("password")
-
-    # 基础校验
     if not user or not password:
         return jsonify({"success": False, "msg": "Username and password cannot be empty"})
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO users(username, password) VALUES (?, ?)", (user, password))
+        conn.commit()
+        msg = {"success": True, "msg": "Registered successfully"}
+    except sqlite3.IntegrityError:
+        msg = {"success": False, "msg": "Username already exists"}
+    conn.close()
+    return jsonify(msg)
 
-    if user in users:
-        return jsonify({"success": False, "msg": "Username already exists"})
-
-    users[user] = password
-    save_json(USERS_FILE, users)  # ⚡️保存到文件
-    return jsonify({"success": True, "msg": "Registration successful"})
-
-# ====== 登录 ======
 @app.route("/login", methods=["POST"])
 def login():
     data = request.json
     user, password = data.get("username"), data.get("password")
-    if users.get(user) == password:
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT password FROM users WHERE username=?", (user,))
+    row = c.fetchone()
+    conn.close()
+    if row and row[0] == password:
         return jsonify({"success": True, "msg": "Login successful"})
     return jsonify({"success": False, "msg": "Username or password incorrect"})
 
-# ====== 提交成绩 ======
 @app.route("/submit", methods=["POST"])
 def submit():
     data = request.json
     user, ms = data.get("username"), data.get("ms")
-    # 更新已有用户成绩，如果更快就替换
-    existing = next((r for r in records if r["username"] == user), None)
-    if existing:
-        if ms < existing["ms"]:
-            existing["ms"] = ms
-    else:
-        records.append({"username": user, "ms": ms})
-    records.sort(key=lambda r: r["ms"])
-    save_json(RECORDS_FILE, records)  # 保存到文件
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT INTO records(username, ms) VALUES (?, ?)", (user, ms))
+    conn.commit()
+    conn.close()
     return jsonify({"success": True})
 
-# ====== 排行榜 ======
 @app.route("/leaderboard", methods=["GET"])
 def leaderboard():
-    return jsonify(records[:5])
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT username, ms FROM records ORDER BY ms ASC LIMIT 5")
+    rows = c.fetchall()
+    conn.close()
+    return jsonify([{"username": r[0], "ms": r[1]} for r in rows])
 
-# ====== 退出登录 ======
 @app.route("/logout", methods=["POST"])
 def logout():
-    session.clear()
-    return jsonify({"msg": "Logged out successfully"})
+    # 这里不需要清数据库，只是返回一个成功信息
+    return jsonify({"success": True, "msg": "Logged out successfully"})
 
 if __name__ == "__main__":
     app.run(debug=True)
