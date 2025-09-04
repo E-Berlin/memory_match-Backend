@@ -113,7 +113,15 @@ def submit():
 def leaderboard():
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT username, ms FROM records ORDER BY ms ASC LIMIT 5")
+
+    # 每个用户只取最高分（最小 ms）
+    cur.execute("""
+        SELECT username, MIN(ms) as ms
+        FROM records
+        GROUP BY username
+        ORDER BY ms ASC
+        LIMIT 10
+    """)
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -127,3 +135,4 @@ def logout():
 
 if __name__ == "__main__":
     app.run(debug=True)
+
