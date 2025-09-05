@@ -133,6 +133,34 @@ def logout():
     session.clear()
     return jsonify({"msg": "Logged out successfully"})
 
+# ====== 注销账户 ======
+@app.route("/delete_account", methods=["POST"])
+def delete_account():
+    data = request.json
+    user = data.get("username")
+    password = data.get("password")
+
+    if not user or not password:
+        return jsonify({"success": False, "msg": "Username or password cannot be empty"})
+
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE username=%s", (user,))
+    row = cur.fetchone()
+
+    if not row or row["password"] != password:
+        cur.close()
+        conn.close()
+        return jsonify({"success": False, "msg": "Incorrect username or password"})
+
+    # 删除用户相关数据（包括排行榜）
+    cur.execute("DELETE FROM records WHERE username=%s", (user,))
+    cur.execute("DELETE FROM users WHERE username=%s", (user,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return jsonify({"success": True, "msg": "Account has been deleted"})
+
 if __name__ == "__main__":
     app.run(debug=True)
-
